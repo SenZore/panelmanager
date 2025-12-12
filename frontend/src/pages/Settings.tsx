@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
 import { settings } from '../api'
-import { Eye, EyeOff, Save, Link2, Search, TestTube, Bug, Check, X, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, Save, Link2, Search, TestTube, Bug, Check, X, Loader2, Key, Shield } from 'lucide-react'
 
 export default function Settings() {
   const [pteroUrl, setPteroUrl] = useState('')
-  const [pteroKey, setPteroKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
-  const [connected, setConnected] = useState(false)
+  const [appKey, setAppKey] = useState('')
+  const [clientKey, setClientKey] = useState('')
+  const [showAppKey, setShowAppKey] = useState(false)
+  const [showClientKey, setShowClientKey] = useState(false)
+  const [hasAppKey, setHasAppKey] = useState(false)
+  const [hasClientKey, setHasClientKey] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [saving, setSaving] = useState(false)
   const [detecting, setDetecting] = useState(false)
@@ -28,7 +31,8 @@ export default function Settings() {
       addDebug('Loading settings...')
       const res = await settings.get()
       setPteroUrl(res.data.ptero_url || '')
-      setConnected(res.data.has_api_key)
+      setHasAppKey(res.data.has_app_key || false)
+      setHasClientKey(res.data.has_client_key || false)
       setDebugMode(res.data.debug_mode || false)
       addDebug('Settings loaded successfully')
     } catch (err: any) {
@@ -44,11 +48,14 @@ export default function Settings() {
     try {
       await settings.save({
         ptero_url: pteroUrl,
-        ptero_key: pteroKey || undefined,
+        ptero_key: appKey || undefined,
+        ptero_client_key: clientKey || undefined,
         debug_mode: debugMode
       })
-      setConnected(true)
-      setPteroKey('')
+      if (appKey) setHasAppKey(true)
+      if (clientKey) setHasClientKey(true)
+      setAppKey('')
+      setClientKey('')
       setMessage({ type: 'success', text: 'Settings saved successfully!' })
       addDebug('Settings saved successfully')
     } catch (err: any) {
@@ -89,11 +96,10 @@ export default function Settings() {
     addDebug(`URL: ${pteroUrl}`)
     addDebug('Sending API request...')
     try {
-      const res = await settings.test(pteroUrl, pteroKey || undefined)
+      const res = await settings.test(pteroUrl, appKey || undefined)
       if (res.data.success) {
         setMessage({ type: 'success', text: 'Connection successful! API is working.' })
         addDebug('Connection test: SUCCESS')
-        setConnected(true)
       } else {
         setMessage({ type: 'error', text: res.data.error || 'Connection failed' })
         addDebug(`Connection test failed: ${res.data.error}`)
@@ -127,56 +133,93 @@ export default function Settings() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            <div>
-              <label className="block text-sm text-zinc-400 font-medium mb-2">Panel URL</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={pteroUrl}
-                  onChange={(e) => setPteroUrl(e.target.value)}
-                  placeholder="https://panel.example.com"
-                  className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                />
-                <button
-                  onClick={detectPterodactyl}
-                  disabled={detecting}
-                  className="bg-white/5 border border-white/10 px-4 rounded-xl hover:bg-white/10 transition-all flex items-center gap-2 disabled:opacity-50"
-                  title="Auto-detect from /var/www/pterodactyl"
-                >
-                  {detecting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-                </button>
-              </div>
-              <p className="text-xs text-zinc-500 mt-2">Click the search icon to auto-detect from this server</p>
+          {/* Panel URL */}
+          <div className="mb-6">
+            <label className="block text-sm text-zinc-400 font-medium mb-2">Panel URL</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={pteroUrl}
+                onChange={(e) => setPteroUrl(e.target.value)}
+                placeholder="https://panel.example.com"
+                className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+              />
+              <button
+                onClick={detectPterodactyl}
+                disabled={detecting}
+                className="bg-white/5 border border-white/10 px-4 rounded-xl hover:bg-white/10 transition-all flex items-center gap-2 disabled:opacity-50"
+                title="Auto-detect from /var/www/pterodactyl"
+              >
+                {detecting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+              </button>
             </div>
-            <div>
-              <label className="block text-sm text-zinc-400 font-medium mb-2">Application API Key</label>
-              <div className="flex gap-2">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={pteroKey}
-                  onChange={(e) => setPteroKey(e.target.value)}
-                  placeholder={connected ? '••••••••••••••••••••' : 'ptla_xxxxxxxxxxxx'}
-                  className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                />
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="bg-white/5 border border-white/10 px-4 rounded-xl hover:bg-white/10 transition-all"
-                >
-                  {showKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              <p className="text-xs text-zinc-500 mt-2">Get from Admin → API → Application API → Create Key</p>
-            </div>
+            <p className="text-xs text-zinc-500 mt-2">Click the search icon to auto-detect from this server</p>
           </div>
 
-          {connected && (
+          {/* Application API Key */}
+          <div className="mb-6 p-5 bg-purple-500/5 border border-purple-500/20 rounded-xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="w-5 h-5 text-purple-400" />
+              <label className="text-sm text-purple-300 font-semibold">Application API Key (Admin)</label>
+              {hasAppKey && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs">Configured</span>}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type={showAppKey ? 'text' : 'password'}
+                value={appKey}
+                onChange={(e) => setAppKey(e.target.value)}
+                placeholder={hasAppKey ? '••••••••••••••••••••' : 'ptla_xxxxxxxxxxxx'}
+                className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+              />
+              <button
+                onClick={() => setShowAppKey(!showAppKey)}
+                className="bg-white/5 border border-white/10 px-4 rounded-xl hover:bg-white/10 transition-all"
+              >
+                {showAppKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 mt-2">
+              For creating servers. Get from: Admin → Application API → Create Key
+            </p>
+          </div>
+
+          {/* Client API Key */}
+          <div className="mb-6 p-5 bg-blue-500/5 border border-blue-500/20 rounded-xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Key className="w-5 h-5 text-blue-400" />
+              <label className="text-sm text-blue-300 font-semibold">Client API Key (User)</label>
+              {hasClientKey && <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-xs">Configured</span>}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type={showClientKey ? 'text' : 'password'}
+                value={clientKey}
+                onChange={(e) => setClientKey(e.target.value)}
+                placeholder={hasClientKey ? '••••••••••••••••••••' : 'ptlc_xxxxxxxxxxxx'}
+                className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+              />
+              <button
+                onClick={() => setShowClientKey(!showClientKey)}
+                className="bg-white/5 border border-white/10 px-4 rounded-xl hover:bg-white/10 transition-all"
+              >
+                {showClientKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 mt-2">
+              For console, files, power controls. Get from: Account Settings → API Credentials → Create Key
+            </p>
+          </div>
+
+          {/* Status */}
+          {(hasAppKey || hasClientKey) && (
             <div className="flex items-center gap-4 p-5 bg-green-500/10 border border-green-500/20 rounded-xl mb-6">
               <div className="w-3 h-3 bg-green-500 rounded-full shadow-lg shadow-green-500/50" />
               <div>
                 <strong className="text-green-400">Connected</strong>
-                <br />
-                <span className="text-zinc-500 text-sm">API key is configured</span>
+                <div className="text-zinc-500 text-sm flex gap-4 mt-1">
+                  {hasAppKey && <span className="text-purple-400">✓ Application Key</span>}
+                  {hasClientKey && <span className="text-blue-400">✓ Client Key</span>}
+                </div>
               </div>
             </div>
           )}

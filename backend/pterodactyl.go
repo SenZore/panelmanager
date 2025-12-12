@@ -15,9 +15,10 @@ import (
 )
 
 type PteroClient struct {
-	BaseURL string
-	APIKey  string
-	Debug   bool
+	BaseURL    string
+	AppKey     string  // Application API key for admin operations
+	ClientKey  string  // Client API key for user operations
+	Debug      bool
 }
 
 type PteroError struct {
@@ -33,22 +34,34 @@ func NewPteroClient(db *sql.DB) (*PteroClient, error) {
 	if err != nil || url == "" {
 		return nil, fmt.Errorf("pterodactyl URL not configured")
 	}
-	key, err := GetSetting(db, "ptero_key")
-	if err != nil || key == "" {
-		return nil, fmt.Errorf("pterodactyl API key not configured")
+	
+	// Application API key (for creating servers, managing users, etc.)
+	appKey, _ := GetSetting(db, "ptero_key")
+	
+	// Client API key (for console, files, power, etc.)
+	clientKey, _ := GetSetting(db, "ptero_client_key")
+	
+	// If no client key, try to use app key (some users might use it for both)
+	if clientKey == "" && appKey != "" {
+		clientKey = appKey
+	}
+	
+	if appKey == "" && clientKey == "" {
+		return nil, fmt.Errorf("no API key configured")
 	}
 	
 	// Check debug mode
 	debug, _ := GetSetting(db, "debug_mode")
 	
 	return &PteroClient{
-		BaseURL: strings.TrimSuffix(url, "/"),
-		APIKey:  key,
-		Debug:   debug == "true",
+		BaseURL:   strings.TrimSuffix(url, "/"),
+		AppKey:    appKey,
+		ClientKey: clientKey,
+		Debug:     debug == "true",
 	}, nil
 }
 
-func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte, error) {
+func (p *PteroClient) doRequest(method, endpoint string, body interface{}, apiKey string) ([]byte, error) {
 	var reqBody io.Reader
 	var bodyBytes []byte
 	
@@ -71,7 +84,7 @@ func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -101,6 +114,32 @@ func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte
 	}
 
 	return respBody, nil
+}
+
+// AppRequest makes a request using the Application API key (for admin operations)
+func (p *PteroClient) AppRequest(method, endpoint string, body interface{}) ([]byte, error) {
+	if p.AppKey == "" {
+		return nil, fmt.Errorf("application API key not configured (required for admin operations)")
+	}
+	return p.doRequest(method, endpoint, body, p.AppKey)
+}
+
+// ClientRequest makes a request using the Client API key (for user operations)
+func (p *PteroClient) ClientRequest(method, endpoint string, body interface{}) ([]byte, error) {
+	if p.ClientKey == "" {
+		return nil, fmt.Errorf("client API key not configured (required for console/files/power)")
+	}
+	return p.doRequest(method, endpoint, body, p.ClientKey)
+}
+
+// Request auto-selects the API key based on endpoint (backwards compatibility)
+func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte, error) {
+	// Client API endpoints
+	if strings.Contains(endpoint, "/api/client/") {
+		return p.ClientRequest(method, endpoint, body)
+	}
+	// Application API endpoints
+	return p.AppRequest(method, endpoint, body)
 }
 
 // DetectPterodactyl checks for local Pterodactyl installation

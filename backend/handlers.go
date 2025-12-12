@@ -19,15 +19,23 @@ func GetSettingsHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pteroURL, _ := GetSetting(db, "ptero_url")
 		debugMode, _ := GetSetting(db, "debug_mode")
-		hasKey := false
+		
+		hasAppKey := false
 		if key, _ := GetSetting(db, "ptero_key"); key != "" {
-			hasKey = true
+			hasAppKey = true
 		}
+		
+		hasClientKey := false
+		if key, _ := GetSetting(db, "ptero_client_key"); key != "" {
+			hasClientKey = true
+		}
+		
 		c.JSON(http.StatusOK, gin.H{
-			"ptero_url":    pteroURL,
-			"has_api_key":  hasKey,
-			"debug_mode":   debugMode == "true",
-			"registration": !HasAdmin(db),
+			"ptero_url":      pteroURL,
+			"has_app_key":    hasAppKey,
+			"has_client_key": hasClientKey,
+			"debug_mode":     debugMode == "true",
+			"registration":   !HasAdmin(db),
 		})
 	}
 }
@@ -35,9 +43,10 @@ func GetSettingsHandler(db *sql.DB) gin.HandlerFunc {
 func SaveSettingsHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			PteroURL  string `json:"ptero_url"`
-			PteroKey  string `json:"ptero_key"`
-			DebugMode *bool  `json:"debug_mode"`
+			PteroURL      string `json:"ptero_url"`
+			PteroKey      string `json:"ptero_key"`       // Application API key
+			PteroClientKey string `json:"ptero_client_key"` // Client API key
+			DebugMode     *bool  `json:"debug_mode"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -49,6 +58,9 @@ func SaveSettingsHandler(db *sql.DB) gin.HandlerFunc {
 		}
 		if req.PteroKey != "" {
 			SetSetting(db, "ptero_key", req.PteroKey)
+		}
+		if req.PteroClientKey != "" {
+			SetSetting(db, "ptero_client_key", req.PteroClientKey)
 		}
 		if req.DebugMode != nil {
 			if *req.DebugMode {

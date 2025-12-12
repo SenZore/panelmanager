@@ -56,7 +56,7 @@ export const auth = {
 
 export const settings = {
   get: () => api.get('/settings'),
-  save: (data: { ptero_url?: string; ptero_key?: string; debug_mode?: boolean }) =>
+  save: (data: { ptero_url?: string; ptero_key?: string; ptero_client_key?: string; debug_mode?: boolean }) =>
     api.post('/settings', data),
   detect: () => api.post('/settings/detect'),
   test: (url?: string, key?: string) => api.post('/settings/test', { url, key }),
