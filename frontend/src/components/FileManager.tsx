@@ -1,45 +1,44 @@
 import { useState, useEffect } from 'react'
 import { files } from '../api'
-import { Folder, File, Upload, FolderPlus, ArrowLeft, Download, Trash2 } from 'lucide-react'
+import { Folder, File, Upload, FolderPlus, ArrowLeft, Download, Trash2, RefreshCw, Loader2, AlertCircle } from 'lucide-react'
 
 interface FileManagerProps {
   serverId: string
 }
 
 interface FileItem {
-  name: string
-  mode: string
-  size: number
-  is_file: boolean
-  is_symlink: boolean
-  mimetype: string
-  created_at: string
-  modified_at: string
+  attributes: {
+    name: string
+    mode: string
+    size: number
+    is_file: boolean
+    is_symlink: boolean
+    mimetype: string
+    created_at: string
+    modified_at: string
+  }
 }
 
 export default function FileManager({ serverId }: FileManagerProps) {
   const [currentPath, setCurrentPath] = useState('/')
   const [fileList, setFileList] = useState<FileItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   useEffect(() => {
     loadFiles()
-  }, [currentPath])
+  }, [currentPath, serverId])
 
   const loadFiles = async () => {
     setLoading(true)
+    setError(null)
     try {
       const res = await files.list(serverId, currentPath)
       setFileList(res.data.data || [])
-    } catch (err) {
-      // Mock data for demo
-      setFileList([
-        { name: 'plugins', mode: 'drwxr-xr-x', size: 0, is_file: false, is_symlink: false, mimetype: 'inode/directory', created_at: '', modified_at: 'Dec 9, 2025' },
-        { name: 'world', mode: 'drwxr-xr-x', size: 156000000, is_file: false, is_symlink: false, mimetype: 'inode/directory', created_at: '', modified_at: 'Dec 9, 2025' },
-        { name: 'server.jar', mode: '-rw-r--r--', size: 45200000, is_file: true, is_symlink: false, mimetype: 'application/java-archive', created_at: '', modified_at: 'Dec 8, 2025' },
-        { name: 'server.properties', mode: '-rw-r--r--', size: 1200, is_file: true, is_symlink: false, mimetype: 'text/plain', created_at: '', modified_at: 'Dec 9, 2025' },
-        { name: 'bukkit.yml', mode: '-rw-r--r--', size: 2800, is_file: true, is_symlink: false, mimetype: 'text/yaml', created_at: '', modified_at: 'Dec 8, 2025' },
-      ])
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to load files. Check your Pterodactyl API connection.')
+      setFileList([])
     } finally {
       setLoading(false)
     }
@@ -53,14 +52,70 @@ export default function FileManager({ serverId }: FileManagerProps) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '-'
+    try {
+      return new Date(dateStr).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    } catch {
+      return dateStr
+    }
+  }
+
   const navigateTo = (folder: string) => {
-    setCurrentPath(currentPath === '/' ? `/${folder}` : `${currentPath}/${folder}`)
+    const newPath = currentPath === '/' ? `/${folder}` : `${currentPath}/${folder}`
+    setCurrentPath(newPath)
   }
 
   const goUp = () => {
     const parts = currentPath.split('/').filter(Boolean)
     parts.pop()
     setCurrentPath('/' + parts.join('/'))
+  }
+
+  const deleteFile = async (fileName: string) => {
+    if (!confirm(`Delete "${fileName}"?`)) return
+
+    setDeleting(fileName)
+    try {
+      await files.delete(serverId, currentPath, [fileName])
+      loadFiles()
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to delete file')
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const downloadFile = async (fileName: string) => {
+    try {
+      const filePath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`
+      const res = await files.download(serverId, filePath)
+      if (res.data.attributes?.url) {
+        window.open(res.data.attributes.url, '_blank')
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to get download URL')
+    }
+  }
+
+  const handleUpload = async () => {
+    try {
+      const res = await files.upload(serverId)
+      if (res.data.attributes?.url) {
+        // Open upload URL in new window (Pterodactyl's upload endpoint)
+        window.open(res.data.attributes.url + `&directory=${encodeURIComponent(currentPath)}`, '_blank')
+        // Refresh after potential upload
+        setTimeout(loadFiles, 3000)
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to get upload URL')
+    }
   }
 
   return (
@@ -76,7 +131,16 @@ export default function FileManager({ serverId }: FileManagerProps) {
           )}
         </div>
         <div className="flex gap-2">
-          <button className="btn-primary text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-1.5">
+          <button
+            onClick={loadFiles}
+            className="bg-white/5 border border-white/10 text-white font-semibold px-3 py-2 rounded-lg text-sm hover:bg-white/10 transition-all"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleUpload}
+            className="btn-primary text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-1.5"
+          >
             <Upload className="w-4 h-4" /> Upload
           </button>
           <button className="bg-white/5 border border-white/10 text-white font-semibold px-4 py-2 rounded-lg text-sm hover:bg-white/10 transition-all flex items-center gap-1.5">
@@ -85,8 +149,20 @@ export default function FileManager({ serverId }: FileManagerProps) {
         </div>
       </div>
 
+      {error && (
+        <div className="bg-red-500/10 border-b border-red-500/20 p-4 text-red-400 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
       {loading ? (
-        <div className="p-8 text-center text-zinc-500">Loading files...</div>
+        <div className="p-8 text-center text-zinc-500 flex items-center justify-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin" /> Loading files...
+        </div>
+      ) : fileList.length === 0 ? (
+        <div className="p-8 text-center text-zinc-500">
+          {error ? 'Could not load files' : 'This folder is empty'}
+        </div>
       ) : (
         <table className="w-full">
           <thead>
@@ -98,33 +174,52 @@ export default function FileManager({ serverId }: FileManagerProps) {
             </tr>
           </thead>
           <tbody>
-            {fileList.map((file) => (
-              <tr key={file.name} className="border-t border-white/5 hover:bg-white/2 transition-colors">
-                <td className="p-4">
-                  {file.is_file ? (
-                    <span className="flex items-center gap-2"><File className="w-4 h-4 text-zinc-500" /> {file.name}</span>
-                  ) : (
-                    <button onClick={() => navigateTo(file.name)} className="hover:text-indigo-400 transition-colors flex items-center gap-2">
-                      <Folder className="w-4 h-4 text-yellow-500" /> <strong>{file.name}</strong>
-                    </button>
-                  )}
-                </td>
-                <td className="p-4 text-zinc-500">{formatSize(file.size)}</td>
-                <td className="p-4 text-zinc-500">{file.modified_at}</td>
-                <td className="p-4 text-right">
-                  <div className="flex gap-1 justify-end">
-                    {file.is_file && (
-                      <button className="bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-sm hover:bg-white/10 transition-all">
-                        <Download className="w-4 h-4" />
+            {fileList.map((file) => {
+              const f = file.attributes
+              return (
+                <tr key={f.name} className="border-t border-white/5 hover:bg-white/2 transition-colors">
+                  <td className="p-4">
+                    {f.is_file ? (
+                      <span className="flex items-center gap-2">
+                        <File className="w-4 h-4 text-zinc-500" /> {f.name}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => navigateTo(f.name)}
+                        className="hover:text-indigo-400 transition-colors flex items-center gap-2"
+                      >
+                        <Folder className="w-4 h-4 text-yellow-500" /> <strong>{f.name}</strong>
                       </button>
                     )}
-                    <button className="bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-sm hover:bg-white/10 transition-all text-red-400">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="p-4 text-zinc-500">{formatSize(f.size)}</td>
+                  <td className="p-4 text-zinc-500">{formatDate(f.modified_at)}</td>
+                  <td className="p-4 text-right">
+                    <div className="flex gap-1 justify-end">
+                      {f.is_file && (
+                        <button
+                          onClick={() => downloadFile(f.name)}
+                          className="bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-sm hover:bg-white/10 transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteFile(f.name)}
+                        disabled={deleting === f.name}
+                        className="bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-sm hover:bg-white/10 transition-all text-red-400 disabled:opacity-50"
+                      >
+                        {deleting === f.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}
