@@ -27,6 +27,11 @@ func main() {
 		// Settings
 		api.GET("/settings", GetSettingsHandler(db))
 		api.POST("/settings", SaveSettingsHandler(db))
+		api.POST("/settings/detect", DetectPterodactylHandler(db))
+		api.POST("/settings/test", TestConnectionHandler(db))
+
+		// Nodes
+		api.GET("/nodes", GetNodesHandler(db))
 
 		// Pterodactyl proxy
 		api.GET("/servers", GetServersHandler(db))

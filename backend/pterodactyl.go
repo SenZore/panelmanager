@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,30 +17,58 @@ import (
 type PteroClient struct {
 	BaseURL string
 	APIKey  string
+	Debug   bool
+}
+
+type PteroError struct {
+	Errors []struct {
+		Code   string `json:"code"`
+		Status string `json:"status"`
+		Detail string `json:"detail"`
+	} `json:"errors"`
 }
 
 func NewPteroClient(db *sql.DB) (*PteroClient, error) {
 	url, err := GetSetting(db, "ptero_url")
-	if err != nil {
+	if err != nil || url == "" {
 		return nil, fmt.Errorf("pterodactyl URL not configured")
 	}
 	key, err := GetSetting(db, "ptero_key")
-	if err != nil {
+	if err != nil || key == "" {
 		return nil, fmt.Errorf("pterodactyl API key not configured")
 	}
-	return &PteroClient{BaseURL: url, APIKey: key}, nil
+	
+	// Check debug mode
+	debug, _ := GetSetting(db, "debug_mode")
+	
+	return &PteroClient{
+		BaseURL: strings.TrimSuffix(url, "/"),
+		APIKey:  key,
+		Debug:   debug == "true",
+	}, nil
 }
 
 func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte, error) {
 	var reqBody io.Reader
+	var bodyBytes []byte
+	
 	if body != nil {
-		jsonBody, _ := json.Marshal(body)
-		reqBody = bytes.NewBuffer(jsonBody)
+		bodyBytes, _ = json.Marshal(body)
+		reqBody = bytes.NewBuffer(bodyBytes)
 	}
 
-	req, err := http.NewRequest(method, p.BaseURL+endpoint, reqBody)
+	fullURL := p.BaseURL + endpoint
+	
+	if p.Debug {
+		log.Printf("[DEBUG] %s %s", method, fullURL)
+		if bodyBytes != nil {
+			log.Printf("[DEBUG] Request Body: %s", string(bodyBytes))
+		}
+	}
+
+	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
@@ -46,24 +77,96 @@ func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %v", err)
+	}
+	
+	if p.Debug {
+		log.Printf("[DEBUG] Response Status: %d", resp.StatusCode)
+		log.Printf("[DEBUG] Response Body: %s", string(respBody))
+	}
+
+	// Check for error responses
+	if resp.StatusCode >= 400 {
+		var pteroErr PteroError
+		if json.Unmarshal(respBody, &pteroErr) == nil && len(pteroErr.Errors) > 0 {
+			return nil, fmt.Errorf("pterodactyl error: %s", pteroErr.Errors[0].Detail)
+		}
+		return nil, fmt.Errorf("pterodactyl API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}
+
+// DetectPterodactyl checks for local Pterodactyl installation
+func DetectPterodactyl() (string, string, error) {
+	envPath := "/var/www/pterodactyl/.env"
+	
+	// Check if file exists
+	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		return "", "", fmt.Errorf("pterodactyl not found at /var/www/pterodactyl")
+	}
+	
+	// Read .env file
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot read pterodactyl .env: %v", err)
+	}
+	
+	var appURL string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "APP_URL=") {
+			appURL = strings.TrimPrefix(line, "APP_URL=")
+			appURL = strings.Trim(appURL, "\"' \r")
+			break
+		}
+	}
+	
+	if appURL == "" {
+		return "", "", fmt.Errorf("APP_URL not found in pterodactyl .env")
+	}
+	
+	return appURL, envPath, nil
+}
+
+// TestConnection tests if the Pterodactyl API is accessible
+func TestPteroConnection(url, key string) (bool, string, error) {
+	client := &PteroClient{
+		BaseURL: strings.TrimSuffix(url, "/"),
+		APIKey:  key,
+		Debug:   true,
+	}
+	
+	// Try to get user info (works with both client and application keys)
+	data, err := client.Request("GET", "/api/application/users", nil)
+	if err != nil {
+		// Try client API
+		data, err = client.Request("GET", "/api/client", nil)
+		if err != nil {
+			return false, "", err
+		}
+	}
+	
+	return true, string(data), nil
 }
 
 func GetServersHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		client, err := NewPteroClient(db)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "debug": "Failed to create Pterodactyl client"})
 			return
 		}
 
 		data, err := client.Request("GET", "/api/application/servers?include=allocations,egg", nil)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "debug": "Failed to fetch servers from Pterodactyl"})
 			return
 		}
 
@@ -109,7 +212,7 @@ func CreateServerHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CreateServerRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "debug": "Invalid request body"})
 			return
 		}
 
@@ -119,34 +222,46 @@ func CreateServerHandler(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Get available allocation
-		allocData, _ := client.Request("GET", fmt.Sprintf("/api/application/nodes/%d/allocations", req.NodeID), nil)
-		var allocResult map[string]interface{}
-		json.Unmarshal(allocData, &allocResult)
-
-		// Find first unassigned allocation
-		var allocationID int
-		if data, ok := allocResult["data"].([]interface{}); ok {
-			for _, a := range data {
-				alloc := a.(map[string]interface{})["attributes"].(map[string]interface{})
-				if alloc["assigned"].(bool) == false {
-					allocationID = int(alloc["id"].(float64))
-					break
-				}
-			}
+		// Get available allocation or create one
+		allocationID, err := getOrCreateAllocation(client, req.NodeID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "debug": "Failed to get/create allocation"})
+			return
 		}
 
-		if allocationID == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No available allocations"})
-			return
+		// Get egg info for startup command and docker image
+		eggData, err := client.Request("GET", fmt.Sprintf("/api/application/nests/1/eggs/%d?include=variables", req.EggID), nil)
+		if err != nil {
+			// Use defaults if egg fetch fails
+			log.Printf("[DEBUG] Failed to fetch egg: %v, using defaults", err)
+		}
+		
+		dockerImage := "ghcr.io/pterodactyl/yolks:java_21"
+		startup := "java -Xms128M -Xmx{{SERVER_MEMORY}}M -jar server.jar"
+		
+		if eggData != nil {
+			var eggResult struct {
+				Attributes struct {
+					DockerImage string `json:"docker_image"`
+					Startup     string `json:"startup"`
+				} `json:"attributes"`
+			}
+			if json.Unmarshal(eggData, &eggResult) == nil {
+				if eggResult.Attributes.DockerImage != "" {
+					dockerImage = eggResult.Attributes.DockerImage
+				}
+				if eggResult.Attributes.Startup != "" {
+					startup = eggResult.Attributes.Startup
+				}
+			}
 		}
 
 		serverData := map[string]interface{}{
 			"name":         req.Name,
 			"user":         1,
 			"egg":          req.EggID,
-			"docker_image": "ghcr.io/pterodactyl/yolks:java_21",
-			"startup":      "java -Xms128M -Xmx{{SERVER_MEMORY}}M -jar server.jar",
+			"docker_image": dockerImage,
+			"startup":      startup,
 			"environment": map[string]string{
 				"SERVER_JARFILE": "server.jar",
 				"BUILD_NUMBER":   "latest",
@@ -170,7 +285,7 @@ func CreateServerHandler(db *sql.DB) gin.HandlerFunc {
 
 		data, err := client.Request("POST", "/api/application/servers", serverData)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "debug": "Failed to create server"})
 			return
 		}
 
@@ -178,6 +293,90 @@ func CreateServerHandler(db *sql.DB) gin.HandlerFunc {
 		json.Unmarshal(data, &result)
 		c.JSON(http.StatusCreated, result)
 	}
+}
+
+// getOrCreateAllocation finds an available allocation or creates one
+func getOrCreateAllocation(client *PteroClient, nodeID int) (int, error) {
+	// First, try to find an existing unassigned allocation
+	allocData, err := client.Request("GET", fmt.Sprintf("/api/application/nodes/%d/allocations", nodeID), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get allocations: %v", err)
+	}
+	
+	var allocResult struct {
+		Data []struct {
+			Attributes struct {
+				ID       int  `json:"id"`
+				Port     int  `json:"port"`
+				Assigned bool `json:"assigned"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	
+	if err := json.Unmarshal(allocData, &allocResult); err != nil {
+		return 0, fmt.Errorf("failed to parse allocations: %v", err)
+	}
+	
+	// Find first unassigned allocation
+	for _, a := range allocResult.Data {
+		if !a.Attributes.Assigned {
+			log.Printf("[DEBUG] Found available allocation: ID=%d Port=%d", a.Attributes.ID, a.Attributes.Port)
+			return a.Attributes.ID, nil
+		}
+	}
+	
+	// No free allocation found, create one
+	log.Printf("[DEBUG] No free allocations, creating new one...")
+	
+	// Get node info for IP
+	nodeData, err := client.Request("GET", fmt.Sprintf("/api/application/nodes/%d", nodeID), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get node info: %v", err)
+	}
+	
+	var nodeResult struct {
+		Attributes struct {
+			FQDN string `json:"fqdn"`
+		} `json:"attributes"`
+	}
+	json.Unmarshal(nodeData, &nodeResult)
+	
+	// Find the highest port in use and add 1
+	nextPort := 25565
+	for _, a := range allocResult.Data {
+		if a.Attributes.Port >= nextPort {
+			nextPort = a.Attributes.Port + 1
+		}
+	}
+	
+	// Create new allocation
+	newAlloc := map[string]interface{}{
+		"ip":    "0.0.0.0",
+		"ports": []string{fmt.Sprintf("%d", nextPort)},
+	}
+	
+	_, err = client.Request("POST", fmt.Sprintf("/api/application/nodes/%d/allocations", nodeID), newAlloc)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create allocation: %v", err)
+	}
+	
+	// Fetch allocations again to get the new one's ID
+	allocData, err = client.Request("GET", fmt.Sprintf("/api/application/nodes/%d/allocations", nodeID), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get updated allocations: %v", err)
+	}
+	
+	json.Unmarshal(allocData, &allocResult)
+	
+	// Find the allocation we just created (should be unassigned with port = nextPort)
+	for _, a := range allocResult.Data {
+		if a.Attributes.Port == nextPort && !a.Attributes.Assigned {
+			log.Printf("[DEBUG] Created new allocation: ID=%d Port=%d", a.Attributes.ID, a.Attributes.Port)
+			return a.Attributes.ID, nil
+		}
+	}
+	
+	return 0, fmt.Errorf("failed to find newly created allocation")
 }
 
 func DeleteServerHandler(db *sql.DB) gin.HandlerFunc {
