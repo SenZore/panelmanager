@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type PteroClient struct {
@@ -262,37 +263,48 @@ func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 		return "", "", "", fmt.Errorf("no admin user found in pterodactyl: %v", err)
 	}
 	
-	// Generate API tokens
-	appToken := generateAPIToken("ptla")
-	clientToken := generateAPIToken("ptlc")
+	// Generate API tokens (the part after the prefix is the secret)
+	appTokenPlain := generateAPIToken("ptla")
+	clientTokenPlain := generateAPIToken("ptlc")
 	
-	// Create Application API Key
+	// Hash the tokens for database storage (Pterodactyl uses bcrypt)
+	appTokenHash, err := bcrypt.GenerateFromPassword([]byte(appTokenPlain), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to hash app token: %v", err)
+	}
+	clientTokenHash, err := bcrypt.GenerateFromPassword([]byte(clientTokenPlain), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to hash client token: %v", err)
+	}
+	
+	// Create Application API Key (key_type 1 = application)
+	// identifier = first 16 chars, token = bcrypt hash
 	_, err = pteroDB.Exec(`
 		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
 		VALUES (?, 1, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
-	`, userID, appToken[:16], appToken)
+	`, userID, appTokenPlain[:16], string(appTokenHash))
 	if err != nil {
 		log.Printf("[WARN] Failed to create application API key: %v", err)
 	}
 	
-	// Create Client API Key
+	// Create Client API Key (key_type 0 = client)
 	_, err = pteroDB.Exec(`
 		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
 		VALUES (?, 0, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
-	`, userID, clientToken[:16], clientToken)
+	`, userID, clientTokenPlain[:16], string(clientTokenHash))
 	if err != nil {
 		log.Printf("[WARN] Failed to create client API key: %v", err)
 	}
 	
-	// Save to local database
+	// Save PLAIN tokens to local database (these are what we use for API calls)
 	SetSetting(localDB, "ptero_url", config.AppURL)
-	SetSetting(localDB, "ptero_key", appToken)
-	SetSetting(localDB, "ptero_client_key", clientToken)
+	SetSetting(localDB, "ptero_key", appTokenPlain)
+	SetSetting(localDB, "ptero_client_key", clientTokenPlain)
 	SetSetting(localDB, "ptero_auto_integrated", "true")
 	
 	log.Printf("[INFO] Auto-integrated with Pterodactyl at %s", config.AppURL)
 	
-	return config.AppURL, appToken, clientToken, nil
+	return config.AppURL, appTokenPlain, clientTokenPlain, nil
 }
 
 // CheckAutoIntegration checks if we can auto-integrate on startup
