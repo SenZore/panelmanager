@@ -66,10 +66,10 @@ func main() {
 	}
 
 	// Serve frontend static files
-	frontendDist := filepath.Join("frontend", "dist")
+	frontendDist := "dist"
 	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
 		// Try alternative path for when running from install directory
-		frontendDist = "/var/www/senzdev/panelmanager/frontend/dist"
+		frontendDist = "/var/www/senzdev/panelmanager/dist"
 	}
 
 	// Serve static assets
