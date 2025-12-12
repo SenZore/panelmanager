@@ -22,19 +22,25 @@ A web panel for managing Pterodactyl game servers.
 
 ### Easy way (recommended)
 
-Just copy and paste this into your terminal:
+Copy and paste this into your terminal:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/aio-install.sh | sudo bash
+sudo bash <(curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/aio-install.sh)
 ```
 
-This will check your system, ask for confirmation, then install everything automatically.
+This will:
+- Ask you what port to use (checks if port is available)
+- Ask for your domain (optional, for SSL)
+- Check if DNS is set up correctly
+- Set up SSL automatically with Let's Encrypt
+- Make it auto-start when your VPS reboots
 
-### Regular way
+### Quick way (no questions asked)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/install.sh | sudo bash
 ```
+
 
 ### What you need
 
