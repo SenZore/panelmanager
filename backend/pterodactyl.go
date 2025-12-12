@@ -177,16 +177,17 @@ func DetectPterodactyl() (string, string, error) {
 // TestConnection tests if the Pterodactyl API is accessible
 func TestPteroConnection(url, key string) (bool, string, error) {
 	client := &PteroClient{
-		BaseURL: strings.TrimSuffix(url, "/"),
-		APIKey:  key,
-		Debug:   true,
+		BaseURL:   strings.TrimSuffix(url, "/"),
+		AppKey:    key,
+		ClientKey: key,
+		Debug:     true,
 	}
 	
 	// Try to get user info (works with both client and application keys)
-	data, err := client.Request("GET", "/api/application/users", nil)
+	data, err := client.AppRequest("GET", "/api/application/users", nil)
 	if err != nil {
 		// Try client API
-		data, err = client.Request("GET", "/api/client", nil)
+		data, err = client.ClientRequest("GET", "/api/client", nil)
 		if err != nil {
 			return false, "", err
 		}
