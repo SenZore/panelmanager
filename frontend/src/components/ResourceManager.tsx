@@ -6,7 +6,7 @@ interface ResourceManagerProps {
   serverId: string
 }
 
-export default function ResourceManager({ server, serverId }: ResourceManagerProps) {
+export default function ResourceManager({ server, serverId: _serverId }: ResourceManagerProps) {
   const [ram, setRam] = useState(server.limits?.memory || 1024)
   const [cpu, setCpu] = useState(server.limits?.cpu || 100)
   const [disk, setDisk] = useState(server.limits?.disk || 5120)
@@ -92,8 +92,8 @@ export default function ResourceManager({ server, serverId }: ResourceManagerPro
     <div className="space-y-6">
       {message && (
         <div className={`glass rounded-2xl p-4 flex items-center gap-3 ${message.type === 'success'
-            ? 'bg-green-500/10 border border-green-500/20 text-green-400'
-            : 'bg-red-500/10 border border-red-500/20 text-red-400'
+          ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+          : 'bg-red-500/10 border border-red-500/20 text-red-400'
           }`}>
           {message.text}
         </div>
