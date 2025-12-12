@@ -324,7 +324,7 @@ clone_repository() {
 build_backend() {
     print_step "Building backend..."
     cd "$INSTALL_DIR/backend"
-    /usr/local/go/bin/go mod download
+    /usr/local/go/bin/go mod tidy
     /usr/local/go/bin/go build -o "$INSTALL_DIR/panelmanager" .
     print_status "Backend built"
 }
@@ -431,7 +431,7 @@ case "$1" in
         echo "Updating PanelManager..."
         cd "$INSTALL_DIR"
         git pull
-        cd backend && /usr/local/go/bin/go build -o "$INSTALL_DIR/panelmanager" .
+        cd backend && /usr/local/go/bin/go mod tidy && /usr/local/go/bin/go build -o "$INSTALL_DIR/panelmanager" .
         cd ../frontend && npm install && npm run build
         systemctl restart panelmanager
         echo "Updated!"
