@@ -60,6 +60,7 @@ export const settings = {
     api.post('/settings', data),
   detect: () => api.post('/settings/detect'),
   test: (url?: string, key?: string) => api.post('/settings/test', { url, key }),
+  autoIntegrate: () => api.post('/settings/auto-integrate'),
 }
 
 export const nodes = {

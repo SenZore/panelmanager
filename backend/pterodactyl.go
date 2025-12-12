@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type PteroClient struct {
@@ -27,6 +30,16 @@ type PteroError struct {
 		Status string `json:"status"`
 		Detail string `json:"detail"`
 	} `json:"errors"`
+}
+
+// PteroEnvConfig holds parsed Pterodactyl .env configuration
+type PteroEnvConfig struct {
+	AppURL     string
+	DBHost     string
+	DBPort     string
+	DBDatabase string
+	DBUsername string
+	DBPassword string
 }
 
 func NewPteroClient(db *sql.DB) (*PteroClient, error) {
@@ -142,36 +155,169 @@ func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte
 	return p.AppRequest(method, endpoint, body)
 }
 
-// DetectPterodactyl checks for local Pterodactyl installation
-func DetectPterodactyl() (string, string, error) {
+// ReadPterodactylEnv reads and parses the Pterodactyl .env file
+func ReadPterodactylEnv() (*PteroEnvConfig, error) {
 	envPath := "/var/www/pterodactyl/.env"
 	
 	// Check if file exists
 	if _, err := os.Stat(envPath); os.IsNotExist(err) {
-		return "", "", fmt.Errorf("pterodactyl not found at /var/www/pterodactyl")
+		return nil, fmt.Errorf("pterodactyl not found at /var/www/pterodactyl")
 	}
 	
 	// Read .env file
 	data, err := os.ReadFile(envPath)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot read pterodactyl .env: %v", err)
+		return nil, fmt.Errorf("cannot read pterodactyl .env: %v", err)
 	}
 	
-	var appURL string
+	config := &PteroEnvConfig{
+		DBPort: "3306", // default
+	}
+	
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "APP_URL=") {
-			appURL = strings.TrimPrefix(line, "APP_URL=")
-			appURL = strings.Trim(appURL, "\"' \r")
-			break
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+			continue
+		}
+		
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		
+		key := strings.TrimSpace(parts[0])
+		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+		
+		switch key {
+		case "APP_URL":
+			config.AppURL = value
+		case "DB_HOST":
+			config.DBHost = value
+		case "DB_PORT":
+			config.DBPort = value
+		case "DB_DATABASE":
+			config.DBDatabase = value
+		case "DB_USERNAME":
+			config.DBUsername = value
+		case "DB_PASSWORD":
+			config.DBPassword = value
 		}
 	}
 	
-	if appURL == "" {
-		return "", "", fmt.Errorf("APP_URL not found in pterodactyl .env")
+	if config.AppURL == "" {
+		return nil, fmt.Errorf("APP_URL not found in pterodactyl .env")
 	}
 	
-	return appURL, envPath, nil
+	return config, nil
+}
+
+// DetectPterodactyl checks for local Pterodactyl installation (legacy)
+func DetectPterodactyl() (string, string, error) {
+	config, err := ReadPterodactylEnv()
+	if err != nil {
+		return "", "", err
+	}
+	return config.AppURL, "/var/www/pterodactyl/.env", nil
+}
+
+// generateAPIToken creates a random API token
+func generateAPIToken(prefix string) string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return prefix + "_" + hex.EncodeToString(bytes)
+}
+
+// AutoIntegratePterodactyl connects to local Pterodactyl database and creates API keys
+func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
+	config, err := ReadPterodactylEnv()
+	if err != nil {
+		return "", "", "", err
+	}
+	
+	// Connect to Pterodactyl's MySQL database
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		config.DBUsername,
+		config.DBPassword,
+		config.DBHost,
+		config.DBPort,
+		config.DBDatabase,
+	)
+	
+	pteroDB, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to connect to pterodactyl database: %v", err)
+	}
+	defer pteroDB.Close()
+	
+	// Test connection
+	if err := pteroDB.Ping(); err != nil {
+		return "", "", "", fmt.Errorf("failed to ping pterodactyl database: %v", err)
+	}
+	
+	// Get the first admin user
+	var userID int
+	err = pteroDB.QueryRow("SELECT id FROM users WHERE root_admin = 1 LIMIT 1").Scan(&userID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("no admin user found in pterodactyl: %v", err)
+	}
+	
+	// Generate API tokens
+	appToken := generateAPIToken("ptla")
+	clientToken := generateAPIToken("ptlc")
+	
+	// Create Application API Key
+	_, err = pteroDB.Exec(`
+		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
+		VALUES (?, 1, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
+	`, userID, appToken[:16], appToken)
+	if err != nil {
+		log.Printf("[WARN] Failed to create application API key: %v", err)
+	}
+	
+	// Create Client API Key
+	_, err = pteroDB.Exec(`
+		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
+		VALUES (?, 0, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
+	`, userID, clientToken[:16], clientToken)
+	if err != nil {
+		log.Printf("[WARN] Failed to create client API key: %v", err)
+	}
+	
+	// Save to local database
+	SetSetting(localDB, "ptero_url", config.AppURL)
+	SetSetting(localDB, "ptero_key", appToken)
+	SetSetting(localDB, "ptero_client_key", clientToken)
+	SetSetting(localDB, "ptero_auto_integrated", "true")
+	
+	log.Printf("[INFO] Auto-integrated with Pterodactyl at %s", config.AppURL)
+	
+	return config.AppURL, appToken, clientToken, nil
+}
+
+// CheckAutoIntegration checks if we can auto-integrate on startup
+func CheckAutoIntegration(db *sql.DB) {
+	// Check if already configured
+	if url, _ := GetSetting(db, "ptero_url"); url != "" {
+		return
+	}
+	
+	// Check if auto-integration is disabled
+	if disabled, _ := GetSetting(db, "ptero_auto_integrate_disabled"); disabled == "true" {
+		return
+	}
+	
+	// Try to auto-integrate
+	url, appKey, clientKey, err := AutoIntegratePterodactyl(db)
+	if err != nil {
+		log.Printf("[INFO] Auto-integration not available: %v", err)
+		return
+	}
+	
+	log.Printf("[SUCCESS] Auto-integrated with Pterodactyl!")
+	log.Printf("  URL: %s", url)
+	log.Printf("  App Key: %s...", appKey[:20])
+	log.Printf("  Client Key: %s...", clientKey[:20])
 }
 
 // TestConnection tests if the Pterodactyl API is accessible

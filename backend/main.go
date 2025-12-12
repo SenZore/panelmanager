@@ -13,6 +13,9 @@ func main() {
 	db := InitDB()
 	defer db.Close()
 
+	// Try to auto-integrate with local Pterodactyl installation
+	CheckAutoIntegration(db)
+
 	r := gin.Default()
 	r.Use(CORSMiddleware())
 
@@ -29,6 +32,7 @@ func main() {
 		api.POST("/settings", SaveSettingsHandler(db))
 		api.POST("/settings/detect", DetectPterodactylHandler(db))
 		api.POST("/settings/test", TestConnectionHandler(db))
+		api.POST("/settings/auto-integrate", AutoIntegrateHandler(db))
 
 		// Nodes
 		api.GET("/nodes", GetNodesHandler(db))

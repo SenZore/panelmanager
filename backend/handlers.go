@@ -100,6 +100,30 @@ func DetectPterodactylHandler(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
+// AutoIntegrateHandler connects to local Pterodactyl database and creates API keys
+func AutoIntegrateHandler(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		url, appKey, clientKey, err := AutoIntegratePterodactyl(db)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   err.Error(),
+				"debug":   "Failed to auto-integrate with Pterodactyl",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success":     true,
+			"url":         url,
+			"has_app_key": appKey != "",
+			"has_client_key": clientKey != "",
+			"message":     "Successfully integrated with local Pterodactyl! API keys created automatically.",
+			"debug":       "Connected to database, created API keys",
+		})
+	}
+}
+
 // TestConnectionHandler tests the Pterodactyl API connection
 func TestConnectionHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
