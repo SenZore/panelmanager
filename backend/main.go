@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
@@ -63,6 +64,26 @@ func main() {
 		api.GET("/updates/check", CheckUpdatesHandler())
 		api.POST("/updates/install", InstallUpdateHandler())
 	}
+
+	// Serve frontend static files
+	frontendDist := filepath.Join("frontend", "dist")
+	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
+		// Try alternative path for when running from install directory
+		frontendDist = "/var/www/senzdev/panelmanager/frontend/dist"
+	}
+
+	// Serve static assets
+	r.Static("/assets", filepath.Join(frontendDist, "assets"))
+	
+	// Serve index.html for SPA routes
+	r.NoRoute(func(c *gin.Context) {
+		indexPath := filepath.Join(frontendDist, "index.html")
+		if _, err := os.Stat(indexPath); err == nil {
+			c.File(indexPath)
+		} else {
+			c.JSON(404, gin.H{"error": "Frontend not found. Please build the frontend first."})
+		}
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
