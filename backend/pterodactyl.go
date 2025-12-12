@@ -11,11 +11,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type PteroClient struct {
@@ -229,88 +229,79 @@ func generateAPIToken(prefix string) string {
 	return prefix + "_" + hex.EncodeToString(bytes)
 }
 
-// AutoIntegratePterodactyl connects to local Pterodactyl database and creates API keys
+// AutoIntegratePterodactyl connects to local Pterodactyl and creates API keys via artisan
 func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 	config, err := ReadPterodactylEnv()
 	if err != nil {
 		return "", "", "", err
 	}
 	
-	// Connect to Pterodactyl's MySQL database
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
-		config.DBUsername,
-		config.DBPassword,
-		config.DBHost,
-		config.DBPort,
-		config.DBDatabase,
-	)
+	// Use PHP artisan tinker to create API keys through Laravel's encryption layer
+	// This is the only reliable way since Pterodactyl encrypts tokens with APP_KEY
 	
-	pteroDB, err := sql.Open("mysql", dsn)
+	// Create Application API Key via tinker
+	appKeyScript := `
+		$user = \Pterodactyl\Models\User::where('root_admin', true)->first();
+		if (!$user) { echo 'NO_ADMIN'; exit; }
+		$key = \Pterodactyl\Models\ApiKey::create([
+			'user_id' => $user->id,
+			'key_type' => \Pterodactyl\Models\ApiKey::TYPE_APPLICATION,
+			'identifier' => \Illuminate\Support\Str::random(16),
+			'token' => $token = \Illuminate\Support\Str::random(32),
+			'memo' => 'PanelManager Auto-Generated',
+			'allowed_ips' => [],
+		]);
+		echo $key->identifier . '.' . $token;
+	`
+	
+	appKeyCmd := exec.Command("php", "artisan", "tinker", "--execute", appKeyScript)
+	appKeyCmd.Dir = "/var/www/pterodactyl"
+	appKeyOut, err := appKeyCmd.Output()
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to connect to pterodactyl database: %v", err)
-	}
-	defer pteroDB.Close()
-	
-	// Test connection
-	if err := pteroDB.Ping(); err != nil {
-		return "", "", "", fmt.Errorf("failed to ping pterodactyl database: %v", err)
+		return "", "", "", fmt.Errorf("failed to create application API key via artisan: %v", err)
 	}
 	
-	// Get the first admin user
-	var userID int
-	err = pteroDB.QueryRow("SELECT id FROM users WHERE root_admin = 1 LIMIT 1").Scan(&userID)
+	appToken := strings.TrimSpace(string(appKeyOut))
+	if appToken == "NO_ADMIN" || appToken == "" {
+		return "", "", "", fmt.Errorf("no admin user found in pterodactyl")
+	}
+	
+	// Create Client API Key via tinker
+	clientKeyScript := `
+		$user = \Pterodactyl\Models\User::where('root_admin', true)->first();
+		$key = \Pterodactyl\Models\ApiKey::create([
+			'user_id' => $user->id,
+			'key_type' => \Pterodactyl\Models\ApiKey::TYPE_ACCOUNT,
+			'identifier' => \Illuminate\Support\Str::random(16),
+			'token' => $token = \Illuminate\Support\Str::random(32),
+			'memo' => 'PanelManager Auto-Generated',
+			'allowed_ips' => [],
+		]);
+		echo $key->identifier . '.' . $token;
+	`
+	
+	clientKeyCmd := exec.Command("php", "artisan", "tinker", "--execute", clientKeyScript)
+	clientKeyCmd.Dir = "/var/www/pterodactyl"
+	clientKeyOut, err := clientKeyCmd.Output()
 	if err != nil {
-		return "", "", "", fmt.Errorf("no admin user found in pterodactyl: %v", err)
+		return "", "", "", fmt.Errorf("failed to create client API key via artisan: %v", err)
 	}
 	
-	// Delete any existing PanelManager API keys first
-	_, err = pteroDB.Exec("DELETE FROM api_keys WHERE memo = 'PanelManager Auto-Generated'")
-	if err != nil {
-		log.Printf("[WARN] Failed to cleanup old API keys: %v", err)
-	}
+	clientToken := strings.TrimSpace(string(clientKeyOut))
 	
-	// Generate API tokens (the part after the prefix is the secret)
-	appTokenPlain := generateAPIToken("ptla")
-	clientTokenPlain := generateAPIToken("ptlc")
+	// Format tokens with proper prefix
+	appTokenFull := "ptla_" + appToken
+	clientTokenFull := "ptlc_" + clientToken
 	
-	// Hash the tokens for database storage (Pterodactyl uses bcrypt)
-	appTokenHash, err := bcrypt.GenerateFromPassword([]byte(appTokenPlain), bcrypt.DefaultCost)
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to hash app token: %v", err)
-	}
-	clientTokenHash, err := bcrypt.GenerateFromPassword([]byte(clientTokenPlain), bcrypt.DefaultCost)
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to hash client token: %v", err)
-	}
-	
-	// Create Application API Key (key_type 1 = application)
-	// identifier = first 16 chars, token = bcrypt hash
-	_, err = pteroDB.Exec(`
-		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
-		VALUES (?, 1, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
-	`, userID, appTokenPlain[:16], string(appTokenHash))
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to create application API key: %v", err)
-	}
-	
-	// Create Client API Key (key_type 0 = client)
-	_, err = pteroDB.Exec(`
-		INSERT INTO api_keys (user_id, key_type, identifier, token, memo, allowed_ips, created_at, updated_at)
-		VALUES (?, 0, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
-	`, userID, clientTokenPlain[:16], string(clientTokenHash))
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to create client API key: %v", err)
-	}
-	
-	// Save PLAIN tokens to local database (these are what we use for API calls)
+	// Save to local database
 	SetSetting(localDB, "ptero_url", config.AppURL)
-	SetSetting(localDB, "ptero_key", appTokenPlain)
-	SetSetting(localDB, "ptero_client_key", clientTokenPlain)
+	SetSetting(localDB, "ptero_key", appTokenFull)
+	SetSetting(localDB, "ptero_client_key", clientTokenFull)
 	SetSetting(localDB, "ptero_auto_integrated", "true")
 	
 	log.Printf("[INFO] Auto-integrated with Pterodactyl at %s", config.AppURL)
 	
-	return config.AppURL, appTokenPlain, clientTokenPlain, nil
+	return config.AppURL, appTokenFull, clientTokenFull, nil
 }
 
 // CheckAutoIntegration checks if we can auto-integrate on startup
