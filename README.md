@@ -1,86 +1,102 @@
 # PanelManager
 
-A modern, elegant web panel for managing Pterodactyl game servers.
+A web panel for managing Pterodactyl game servers.
 
 ![PanelManager](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## Features
+## What it does
 
-- 🎮 **Server Management** - Create, start, stop, restart servers easily
-- 📟 **Live Console** - Real-time server console with command input
-- 📁 **File Manager** - Upload, download, delete server files
-- 🔌 **Plugin Installer** - Search and install from Hangar, Modrinth, SpigotMC
-- 📦 **Modpack Support** - Install modpacks from Modrinth
-- 🥚 **Egg Manager** - Import and sync Pterodactyl eggs
-- 🌐 **Allocation Manager** - Add/remove IP:port allocations
-- 📊 **Resource Management** - Adjust RAM, CPU, disk limits
-- 🔄 **Auto Updates** - One-click updates from GitHub
-- 🌙 **Dark Theme** - Elegant, professional dark interface
+- Manage servers - create, start, stop, restart
+- Live console - see server output and run commands
+- File manager - upload, download, delete files
+- Plugin installer - search and install from Hangar, Modrinth, SpigotMC
+- Modpack support - install modpacks from Modrinth
+- Egg manager - import and sync Pterodactyl eggs
+- Allocation manager - add or remove IP:port allocations
+- Resource management - change RAM, CPU, disk limits
+- Auto updates - update from GitHub with one click
+- Dark theme - easy on the eyes
 
-## Quick Install
+## How to install
+
+### Easy way (recommended)
+
+Just copy and paste this into your terminal:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/aio-install.sh | sudo bash
+```
+
+This will check your system, ask for confirmation, then install everything automatically.
+
+### Regular way
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/senzore/panelmanager/master/install.sh | bash
 ```
 
-## Requirements
+### What you need
 
-- Ubuntu 20.04+ / Debian 11+
+- Ubuntu 20.04 or newer (or Debian 11+)
 - Root access
-- Pterodactyl Panel installed
+- Pterodactyl Panel already installed
 
-## CLI Commands
+## Using the CLI
+
+After installing, you can use these commands:
 
 ```bash
-panelmanager update     # Update to latest version
-panelmanager restart    # Restart the service
-panelmanager stop       # Stop the service
-panelmanager start      # Start the service
-panelmanager status     # Show service status
-panelmanager reinstall  # Clean reinstall
-panelmanager uninstall  # Remove PanelManager
+panelmanager update     # update to latest version
+panelmanager restart    # restart the service
+panelmanager stop       # stop the service
+panelmanager start      # start the service
+panelmanager status     # check if it's running
+panelmanager reinstall  # reinstall everything
+panelmanager uninstall  # remove panelmanager
 ```
 
-## Manual Installation
+## Manual installation
+
+If you want to do it yourself:
 
 ```bash
-# Clone repository
+# get the code
 git clone https://github.com/senzore/panelmanager.git /var/www/senzdev/panelmanager
 cd /var/www/senzdev/panelmanager
 
-# Build backend
+# build backend
 cd backend
 go mod download
 go build -o ../panelmanager .
 
-# Build frontend
+# build frontend
 cd ../frontend
 npm install
 npm run build
 
-# Start
+# run it
 ./panelmanager
 ```
 
-## Configuration
+## Setup
 
-1. Open PanelManager in your browser
-2. Register the admin account (first user becomes admin)
-3. Go to Settings and enter your Pterodactyl Panel URL and API key
-4. Start managing your servers!
+1. Open the panel in your browser (it runs on port 3000)
+2. Make an account (first account becomes admin)
+3. Go to settings and put in your Pterodactyl panel URL and API key
+4. Done, you can now manage servers
 
-## Tech Stack
+## What it's built with
 
-- **Backend**: Go + Gin
-- **Frontend**: React + TypeScript + Vite + Tailwind CSS
-- **Database**: SQLite
-- **APIs**: Pterodactyl, Hangar, Modrinth, SpigotMC
+- Backend: Go with Gin framework
+- Frontend: React with TypeScript, Vite, and Tailwind CSS
+- Database: SQLite
+- APIs: Pterodactyl, Hangar, Modrinth, SpigotMC
 
 ## License
 
-MIT License - see LICENSE file
+MIT License
 
-## Author
+## Made by
 
-Made by [senzore](https://github.com/senzore)
+[senzore](https://github.com/senzore)
