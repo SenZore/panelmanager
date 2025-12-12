@@ -263,6 +263,12 @@ func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 		return "", "", "", fmt.Errorf("no admin user found in pterodactyl: %v", err)
 	}
 	
+	// Delete any existing PanelManager API keys first
+	_, err = pteroDB.Exec("DELETE FROM api_keys WHERE memo = 'PanelManager Auto-Generated'")
+	if err != nil {
+		log.Printf("[WARN] Failed to cleanup old API keys: %v", err)
+	}
+	
 	// Generate API tokens (the part after the prefix is the secret)
 	appTokenPlain := generateAPIToken("ptla")
 	clientTokenPlain := generateAPIToken("ptlc")
@@ -284,7 +290,7 @@ func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 		VALUES (?, 1, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
 	`, userID, appTokenPlain[:16], string(appTokenHash))
 	if err != nil {
-		log.Printf("[WARN] Failed to create application API key: %v", err)
+		return "", "", "", fmt.Errorf("failed to create application API key: %v", err)
 	}
 	
 	// Create Client API Key (key_type 0 = client)
@@ -293,7 +299,7 @@ func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 		VALUES (?, 0, ?, ?, 'PanelManager Auto-Generated', '[]', NOW(), NOW())
 	`, userID, clientTokenPlain[:16], string(clientTokenHash))
 	if err != nil {
-		log.Printf("[WARN] Failed to create client API key: %v", err)
+		return "", "", "", fmt.Errorf("failed to create client API key: %v", err)
 	}
 	
 	// Save PLAIN tokens to local database (these are what we use for API calls)
