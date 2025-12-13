@@ -19,10 +19,9 @@ import (
 )
 
 type PteroClient struct {
-	BaseURL    string
-	AppKey     string  // Application API key for admin operations
-	ClientKey  string  // Client API key for user operations
-	Debug      bool
+	BaseURL string
+	APIKey  string
+	Debug   bool
 }
 
 type PteroError struct {
@@ -49,33 +48,23 @@ func NewPteroClient(db *sql.DB) (*PteroClient, error) {
 		return nil, fmt.Errorf("pterodactyl URL not configured")
 	}
 	
-	// Application API key (for creating servers, managing users, etc.)
-	appKey, _ := GetSetting(db, "ptero_key")
-	
-	// Client API key (for console, files, power, etc.)
-	clientKey, _ := GetSetting(db, "ptero_client_key")
-	
-	// If no client key, try to use app key (some users might use it for both)
-	if clientKey == "" && appKey != "" {
-		clientKey = appKey
-	}
-	
-	if appKey == "" && clientKey == "" {
-		return nil, fmt.Errorf("no API key configured")
+	// Get API key (Application API key)
+	apiKey, _ := GetSetting(db, "ptero_key")
+	if apiKey == "" {
+		return nil, fmt.Errorf("pterodactyl API key not configured")
 	}
 	
 	// Check debug mode
 	debug, _ := GetSetting(db, "debug_mode")
 	
 	return &PteroClient{
-		BaseURL:   strings.TrimSuffix(url, "/"),
-		AppKey:    appKey,
-		ClientKey: clientKey,
-		Debug:     debug == "true",
+		BaseURL: strings.TrimSuffix(url, "/"),
+		APIKey:  apiKey,
+		Debug:   debug == "true",
 	}, nil
 }
 
-func (p *PteroClient) doRequest(method, endpoint string, body interface{}, apiKey string) ([]byte, error) {
+func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte, error) {
 	var reqBody io.Reader
 	var bodyBytes []byte
 	
@@ -98,7 +87,7 @@ func (p *PteroClient) doRequest(method, endpoint string, body interface{}, apiKe
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -128,32 +117,6 @@ func (p *PteroClient) doRequest(method, endpoint string, body interface{}, apiKe
 	}
 
 	return respBody, nil
-}
-
-// AppRequest makes a request using the Application API key (for admin operations)
-func (p *PteroClient) AppRequest(method, endpoint string, body interface{}) ([]byte, error) {
-	if p.AppKey == "" {
-		return nil, fmt.Errorf("application API key not configured (required for admin operations)")
-	}
-	return p.doRequest(method, endpoint, body, p.AppKey)
-}
-
-// ClientRequest makes a request using the Client API key (for user operations)
-func (p *PteroClient) ClientRequest(method, endpoint string, body interface{}) ([]byte, error) {
-	if p.ClientKey == "" {
-		return nil, fmt.Errorf("client API key not configured (required for console/files/power)")
-	}
-	return p.doRequest(method, endpoint, body, p.ClientKey)
-}
-
-// Request auto-selects the API key based on endpoint (backwards compatibility)
-func (p *PteroClient) Request(method, endpoint string, body interface{}) ([]byte, error) {
-	// Client API endpoints
-	if strings.Contains(endpoint, "/api/client/") {
-		return p.ClientRequest(method, endpoint, body)
-	}
-	// Application API endpoints
-	return p.AppRequest(method, endpoint, body)
 }
 
 // ReadPterodactylEnv reads and parses the Pterodactyl .env file
@@ -304,48 +267,38 @@ func AutoIntegratePterodactyl(localDB *sql.DB) (string, string, string, error) {
 	return config.AppURL, appTokenFull, clientTokenFull, nil
 }
 
-// CheckAutoIntegration checks if we can auto-integrate on startup
+// CheckAutoIntegration detects local Pterodactyl and sets URL on startup
 func CheckAutoIntegration(db *sql.DB) {
 	// Check if already configured
-	if url, _ := GetSetting(db, "ptero_url"); url != "" {
+	if existingURL, _ := GetSetting(db, "ptero_url"); existingURL != "" {
 		return
 	}
 	
-	// Check if auto-integration is disabled
-	if disabled, _ := GetSetting(db, "ptero_auto_integrate_disabled"); disabled == "true" {
-		return
-	}
+	log.Printf("[INFO] No existing config, checking for local Pterodactyl...")
 	
-	// Try to auto-integrate
-	url, appKey, clientKey, err := AutoIntegratePterodactyl(db)
+	// Just detect the URL for convenience
+	url, _, err := DetectPterodactyl()
 	if err != nil {
-		log.Printf("[INFO] Auto-integration not available: %v", err)
+		log.Printf("[INFO] Pterodactyl not found locally: %v", err)
 		return
 	}
 	
-	log.Printf("[SUCCESS] Auto-integrated with Pterodactyl!")
-	log.Printf("  URL: %s", url)
-	log.Printf("  App Key: %s...", appKey[:20])
-	log.Printf("  Client Key: %s...", clientKey[:20])
+	SetSetting(db, "ptero_url", url)
+	log.Printf("[INFO] Detected Pterodactyl at %s - please enter your API key in Settings", url)
 }
 
 // TestConnection tests if the Pterodactyl API is accessible
 func TestPteroConnection(url, key string) (bool, string, error) {
 	client := &PteroClient{
-		BaseURL:   strings.TrimSuffix(url, "/"),
-		AppKey:    key,
-		ClientKey: key,
-		Debug:     true,
+		BaseURL: strings.TrimSuffix(url, "/"),
+		APIKey:  key,
+		Debug:   true,
 	}
 	
-	// Try to get user info (works with both client and application keys)
-	data, err := client.AppRequest("GET", "/api/application/users", nil)
+	// Try to get users list (application API)
+	data, err := client.Request("GET", "/api/application/users", nil)
 	if err != nil {
-		// Try client API
-		data, err = client.ClientRequest("GET", "/api/client", nil)
-		if err != nil {
-			return false, "", err
-		}
+		return false, "", err
 	}
 	
 	return true, string(data), nil
