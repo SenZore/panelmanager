@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
+import { servers, updates, eggs, nodes, settings } from '../api'
+import { Server, Wifi, MemoryStick, Network, Plus, Rocket, X, Loader2, ExternalLink, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { servers, updates, eggs, nodes } from '../api'
-import { Server, Wifi, MemoryStick, Network, Plus, Rocket, X, Loader2 } from 'lucide-react'
 
 interface ServerData {
   attributes: {
     id: number
+    identifier: string
     name: string
     description: string
     limits: { memory: number; disk: number; cpu: number }
@@ -20,7 +21,6 @@ interface NodeData {
   attributes: {
     id: number
     name: string
-    location_id: number
   }
 }
 
@@ -42,9 +42,10 @@ export default function Dashboard() {
   const [nodeList, setNodeList] = useState<NodeData[]>([])
   const [nestList, setNestList] = useState<EggData[]>([])
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [panelUrl, setPanelUrl] = useState('')
 
-  // Create server form
   const [newServer, setNewServer] = useState({
     name: '',
     node_id: 0,
@@ -62,12 +63,14 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [serversRes, updatesRes] = await Promise.all([
+      const [serversRes, updatesRes, settingsRes] = await Promise.all([
         servers.list(),
-        updates.check()
+        updates.check(),
+        settings.get()
       ])
       setServerList(serversRes.data.data || [])
       setUpdateInfo(updatesRes.data)
+      setPanelUrl(settingsRes.data.ptero_url || '')
     } catch (err) {
       console.error(err)
     } finally {
@@ -86,12 +89,11 @@ export default function Dashboard() {
       setNodeList(nodesRes.data.data || [])
       setNestList(eggsRes.data.data || [])
 
-      // Set defaults
       if (nodesRes.data.data?.length > 0) {
         setNewServer(prev => ({ ...prev, node_id: nodesRes.data.data[0].attributes.id }))
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load nodes/eggs. Check your API connection in Settings.')
+      setError(err.response?.data?.error || 'Failed to load. Check API connection in Settings.')
     }
   }
 
@@ -106,21 +108,32 @@ export default function Dashboard() {
     try {
       await servers.create(newServer)
       setShowCreateModal(false)
-      setNewServer({
-        name: '',
-        node_id: 0,
-        egg_id: 0,
-        memory: 1024,
-        disk: 5120,
-        cpu: 100,
-        databases: 1,
-        allocations: 1
-      })
+      setNewServer({ name: '', node_id: 0, egg_id: 0, memory: 1024, disk: 5120, cpu: 100, databases: 1, allocations: 1 })
       loadData()
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create server')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const deleteServer = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this server? This cannot be undone.')) return
+
+    setDeleting(id)
+    try {
+      await servers.delete(id.toString())
+      loadData()
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to delete server')
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const openInPanel = (identifier: string) => {
+    if (panelUrl) {
+      window.open(`${panelUrl}/server/${identifier}`, '_blank')
     }
   }
 
@@ -131,15 +144,10 @@ export default function Dashboard() {
     { label: 'Allocations', value: serverList.reduce((acc, s) => acc + (s.attributes.relationships?.allocations?.data?.length || 0), 0), color: 'text-orange-500', icon: Network },
   ]
 
-  // Get all eggs from nests
   const allEggs: { id: number; name: string; nestName: string }[] = []
   nestList.forEach(nest => {
     nest.attributes.relationships?.eggs?.data?.forEach(egg => {
-      allEggs.push({
-        id: egg.attributes.id,
-        name: egg.attributes.name,
-        nestName: nest.attributes.name
-      })
+      allEggs.push({ id: egg.attributes.id, name: egg.attributes.name, nestName: nest.attributes.name })
     })
   })
 
@@ -147,10 +155,7 @@ export default function Dashboard() {
     <div>
       <div className="flex justify-between items-center mb-7">
         <h2 className="text-2xl font-bold">Dashboard</h2>
-        <button
-          onClick={openCreateModal}
-          className="btn-primary text-white font-semibold px-5 py-2.5 rounded-xl transition-all flex items-center gap-2"
-        >
+        <button onClick={openCreateModal} className="btn-primary text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2">
           <Plus className="w-5 h-5" /> Create Server
         </button>
       </div>
@@ -158,18 +163,15 @@ export default function Dashboard() {
       {updateInfo?.update_available && (
         <div className="glass rounded-2xl p-5 mb-6 flex justify-between items-center bg-gradient-to-r from-indigo-500/10 to-purple-500/5 border-indigo-500/20">
           <span className="text-indigo-300 font-medium flex items-center gap-2">
-            <Rocket className="w-5 h-5" /> New version available: {updateInfo.latest} from github.com/senzore/panelmanager
+            <Rocket className="w-5 h-5" /> New version: {updateInfo.latest}
           </span>
-          <Link to="/updates" className="btn-primary text-white font-semibold px-4 py-2 rounded-lg text-sm">
-            Update Now
-          </Link>
+          <Link to="/updates" className="btn-primary text-white font-semibold px-4 py-2 rounded-lg text-sm">Update</Link>
         </div>
       )}
 
       <div className="grid grid-cols-4 gap-4 mb-6">
         {stats.map((stat, i) => (
           <div key={i} className="glass rounded-2xl p-6 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-current opacity-5 rounded-full -translate-y-1/2 translate-x-1/2" />
             <stat.icon className="w-8 h-8 mb-3 opacity-70" />
             <div className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-2">{stat.label}</div>
             <div className={`text-3xl font-bold ${stat.color}`}>{stat.value}</div>
@@ -185,56 +187,57 @@ export default function Dashboard() {
         ) : serverList.length === 0 ? (
           <div className="p-8 text-center text-zinc-500">No servers yet. Create your first server!</div>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="text-xs uppercase tracking-wider text-zinc-500">
-                <th className="text-left p-4 font-semibold">Server Name</th>
-                <th className="text-left p-4 font-semibold">Type</th>
-                <th className="text-left p-4 font-semibold">Status</th>
-                <th className="text-left p-4 font-semibold">Resources</th>
-                <th className="text-left p-4 font-semibold">Connection</th>
-              </tr>
-            </thead>
-            <tbody>
-              {serverList.map((server) => {
-                const alloc = server.attributes.relationships?.allocations?.data?.[0]?.attributes
-                const egg = server.attributes.relationships?.egg?.attributes?.name || 'Unknown'
-                return (
-                  <tr key={server.attributes.id} className="border-t border-white/5 hover:bg-white/2 transition-colors">
-                    <td className="p-4">
-                      <Link to={`/server/${server.attributes.id}`} className="hover:text-indigo-400 transition-colors">
-                        <strong>{server.attributes.name}</strong>
-                        <br />
-                        <span className="text-xs text-zinc-500">{server.attributes.description || 'No description'}</span>
-                      </Link>
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-purple-500/15 text-purple-400 px-3 py-1 rounded-full text-xs font-semibold">
-                        {egg}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-green-500/15 text-green-500 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 w-fit">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse-slow" />
-                        Online
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-2 bg-white/10 rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full" style={{ width: '60%' }} />
-                        </div>
-                        <span className="text-xs text-zinc-500">{server.attributes.limits.memory}MB</span>
-                      </div>
-                    </td>
-                    <td className="p-4 font-mono text-zinc-500 text-sm">
-                      {alloc ? `${alloc.ip}:${alloc.port}` : 'N/A'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+            {serverList.map((server) => {
+              const alloc = server.attributes.relationships?.allocations?.data?.[0]?.attributes
+              const egg = server.attributes.relationships?.egg?.attributes?.name || 'Unknown'
+              return (
+                <div key={server.attributes.id} className="bg-white/5 rounded-xl p-5 border border-white/10 hover:border-white/20 transition-all">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="font-bold text-lg">{server.attributes.name}</h3>
+                      <span className="text-xs text-zinc-500">{server.attributes.description || 'No description'}</span>
+                    </div>
+                    <span className="bg-green-500/15 text-green-500 px-2 py-1 rounded text-xs font-semibold flex items-center gap-1">
+                      <span className="w-2 h-2 bg-green-500 rounded-full" />
+                      Online
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 mb-4 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Type</span>
+                      <span className="text-purple-400">{egg}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Memory</span>
+                      <span>{server.attributes.limits.memory} MB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Address</span>
+                      <span className="font-mono text-xs">{alloc ? `${alloc.ip}:${alloc.port}` : 'N/A'}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openInPanel(server.attributes.identifier)}
+                      className="flex-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" /> Open Panel
+                    </button>
+                    <button
+                      onClick={() => deleteServer(server.attributes.id)}
+                      disabled={deleting === server.attributes.id}
+                      className="bg-red-500/20 hover:bg-red-500/30 text-red-400 px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {deleting === server.attributes.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
 
@@ -244,19 +247,12 @@ export default function Dashboard() {
           <div className="glass rounded-2xl w-full max-w-lg p-6 m-4">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold">Create Server</h3>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-              >
+              <button onClick={() => setShowCreateModal(false)} className="p-2 hover:bg-white/10 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl mb-6">
-                {error}
-              </div>
-            )}
+            {error && <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl mb-6">{error}</div>}
 
             <div className="space-y-4">
               <div>
@@ -279,11 +275,7 @@ export default function Dashboard() {
                     className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
                   >
                     <option value={0}>Select node...</option>
-                    {nodeList.map(node => (
-                      <option key={node.attributes.id} value={node.attributes.id}>
-                        {node.attributes.name}
-                      </option>
-                    ))}
+                    {nodeList.map(node => <option key={node.attributes.id} value={node.attributes.id}>{node.attributes.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -294,11 +286,7 @@ export default function Dashboard() {
                     className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
                   >
                     <option value={0}>Select egg...</option>
-                    {allEggs.map(egg => (
-                      <option key={egg.id} value={egg.id}>
-                        {egg.nestName} - {egg.name}
-                      </option>
-                    ))}
+                    {allEggs.map(egg => <option key={egg.id} value={egg.id}>{egg.nestName} - {egg.name}</option>)}
                   </select>
                 </div>
               </div>
@@ -306,49 +294,21 @@ export default function Dashboard() {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm text-zinc-400 mb-2">Memory (MB)</label>
-                  <input
-                    type="number"
-                    value={newServer.memory}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, memory: parseInt(e.target.value) || 0 }))}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
-                  />
+                  <input type="number" value={newServer.memory} onChange={(e) => setNewServer(prev => ({ ...prev, memory: parseInt(e.target.value) || 0 }))} className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
                 </div>
                 <div>
                   <label className="block text-sm text-zinc-400 mb-2">Disk (MB)</label>
-                  <input
-                    type="number"
-                    value={newServer.disk}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, disk: parseInt(e.target.value) || 0 }))}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
-                  />
+                  <input type="number" value={newServer.disk} onChange={(e) => setNewServer(prev => ({ ...prev, disk: parseInt(e.target.value) || 0 }))} className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
                 </div>
                 <div>
                   <label className="block text-sm text-zinc-400 mb-2">CPU (%)</label>
-                  <input
-                    type="number"
-                    value={newServer.cpu}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, cpu: parseInt(e.target.value) || 0 }))}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
-                  />
+                  <input type="number" value={newServer.cpu} onChange={(e) => setNewServer(prev => ({ ...prev, cpu: parseInt(e.target.value) || 0 }))} className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
                 </div>
               </div>
 
-              <p className="text-xs text-zinc-500">
-                Port will be allocated automatically. No need to create allocations manually.
-              </p>
-
               <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={createServer}
-                  disabled={creating}
-                  className="btn-primary px-6 py-3 rounded-xl flex items-center gap-2 disabled:opacity-50"
-                >
+                <button onClick={() => setShowCreateModal(false)} className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10">Cancel</button>
+                <button onClick={createServer} disabled={creating} className="btn-primary px-6 py-3 rounded-xl flex items-center gap-2 disabled:opacity-50">
                   {creating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
                   Create Server
                 </button>
